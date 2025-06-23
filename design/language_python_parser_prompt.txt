@@ -1,0 +1,4 @@
+I have a prompt programming language named "StructuralML", that is dedicated to generating prompts for LLM.
+
+It behaves like a markup language like php. In the beginning, PHP is used for generating html, StructuralML is used for generating prompt.
+
