@@ -207,7 +207,8 @@ class StructuralMLInterpreter:
                     print(f"Error: Malformed @log statement: {interpolated_line}")
 
             elif interpolated_line.startswith('@include'):
-                match = re.match(r'@include\s*<([^>]+)>', interpolated_line)
+                # Modified regex to look for double quotes
+                match = re.match(r'@include\s*"([^"]+)"', interpolated_line)
                 if match:
                     include_path = os.path.join(os.path.dirname(file_path), match.group(1))
                     if os.path.exists(include_path):
