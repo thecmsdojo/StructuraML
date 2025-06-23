@@ -27,5 +27,8 @@ json_decode=true
 @log "Another LLM query result: {another_prompt_example}"
 
 Final prompt output:
-{phpunit_tests}
 {another_prompt_example}
+
+@foreach car_entry in carmakes_map
+    @log "Make: {car_entry["make"]}"
+@endforeach
