@@ -1,4 +1,4 @@
-@include <included_header.sml>
+@include "included_header.sml"
 
 @set my_sorted_list = "[1, 2, 3, 4, 5]"
 @set reverse_sorted_list = "[5, 4, 3, 2, 1]"
