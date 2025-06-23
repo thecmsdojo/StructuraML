@@ -77,7 +77,7 @@ class StructuralMLInterpreter:
 
         try:
             print(f"\n--- Making ACTUAL LLM API Call to {self.llm_api_url} ---")
-            print(f"Prompt (first 100 chars): '{prompt_text[:100]}...'")
+            print(f"Prompt: '{prompt_text}...'")
             response = requests.post(self.llm_api_url, headers=headers, json=payload)
             response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
 
