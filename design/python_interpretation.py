@@ -3,6 +3,7 @@ import os
 import uuid # For unique temp file names
 import toml
 import requests # For making HTTP requests to the LLM API
+import json # Import the json library
 
 class StructuralMLInterpreter:
     def __init__(self, config_file="config.toml"):
@@ -144,14 +145,20 @@ class StructuralMLInterpreter:
                     if value_expression.startswith('"') and value_expression.endswith('"'):
                         self.variables[var_name] = value_expression[1:-1]
                     elif value_expression.startswith('@prompt'):
-                        prompt_match = re.search(r'@prompt\s*(?:file="([^"]+)")?\s*(?:"((?:[^"\\]|\\.)*)")?\s*(.*)', value_expression)
+                        # Updated regex to capture json_decode parameter
+                        prompt_match = re.search(r'@prompt\s*(?:file="([^"]+)")?\s*(?:"((?:[^"\\]|\\.)*)")?\s*(.*?)(?:\s*json_decode=(true|false))?\s*$', value_expression)
                         if prompt_match:
                             prompt_file = prompt_match.group(1)
                             inline_prompt_content = prompt_match.group(2)
                             other_params_string = prompt_match.group(3).strip()
+                            json_decode_param = prompt_match.group(4) # Capture the json_decode parameter
 
                             max_tokens = None
                             temperature = None
+                            do_json_decode = False # Default to false
+
+                            if json_decode_param and json_decode_param.lower() == 'true':
+                                do_json_decode = True
 
                             max_token_match = re.search(r'max_token=(\d+)', other_params_string)
                             if max_token_match:
@@ -177,7 +184,16 @@ class StructuralMLInterpreter:
                                 final_prompt = ""
 
                             llm_response = self.llm_api(final_prompt, max_tokens, temperature)
-                            self.variables[var_name] = llm_response
+
+                            if do_json_decode:
+                                try:
+                                    self.variables[var_name] = json.loads(llm_response)
+                                    print(f"JSON decoded response for '{var_name}'.")
+                                except json.JSONDecodeError as e:
+                                    print(f"Error decoding JSON for '{var_name}': {e}. Storing as raw string.")
+                                    self.variables[var_name] = llm_response # Store raw if decode fails
+                            else:
+                                self.variables[var_name] = llm_response
                         else:
                             print(f"Error: Malformed @prompt statement: {interpolated_line}")
                     elif value_expression.startswith('[') and value_expression.endswith(']'):
@@ -307,8 +323,34 @@ class StructuralMLInterpreter:
         return temp_file_name
 
 
-# --- Example Usage ---
+# --- Main Execution Logic ---
 if __name__ == "__main__":
+    # Before running this script:
+    # 1. Create a 'config.toml' file in the same directory, e.g.:
+    #    [chatgpt]
+    #    api_key = "YOUR_OPENAI_API_KEY"
+    #    api_url = "https://api.openai.com/v1/chat/completions"
+    #
+    # 2. Create a 'main_prompt.sml' file in the same directory, e.g.:
+    #    @set my_name = "Alice"
+    #    @log Hello, {my_name}!
+
+    #    @set current_year = 2025
+    #    @if current_year > 2024
+    #    @log It's a new year!
+    #    @endif
+
+    #    @set colors = ["red", "green", "blue"]
+    #    @foreach color in colors
+    #    @log My favorite color is {color}.
+    #    @endforeach
+
+    #    # Example for @prompt with json_decode
+    #    # Create a 'prompts' directory and a file inside it: 'prompts/my_json_prompt.txt'
+    #    # with content like: {"item": "apple", "quantity": 10, "price": 1.25}
+    #    @set product_info = @prompt file="prompts/my_json_prompt.txt" json_decode=true
+    #    @log Product: {product_info["item"]}, Quantity: {product_info["quantity"]}
+
     # Initialize interpreter with the config file
     interpreter = StructuralMLInterpreter(config_file="config.toml")
     final_output = interpreter.execute('main_prompt.sml')
