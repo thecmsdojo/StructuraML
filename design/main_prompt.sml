@@ -10,8 +10,7 @@
     @log "My number is not greater than 5."
 @endif
 
-@set carmakes_map = @prompt file="prompts/car_make_json.sml" max_token=1000
-json_decode=true
+@set carmakes_map = @prompt file="prompts/car_make_json.sml" max_token=1000 json_decode=true
 
 @log {carmakes_map}
 
