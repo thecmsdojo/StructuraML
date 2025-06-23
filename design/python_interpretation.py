@@ -186,8 +186,10 @@ class StructuralMLInterpreter:
                             llm_response = self.llm_api(final_prompt, max_tokens, temperature)
 
                             if do_json_decode:
+                                # This regex handles both ```json and ```
+                                cleaned_llm_response = re.sub(r"```(?:json)?\s*(.*?)\s*```", r"\1", llm_response, flags=re.DOTALL)
                                 try:
-                                    self.variables[var_name] = json.loads(llm_response)
+                                    self.variables[var_name] = json.loads(cleaned_llm_response)
                                     print(f"JSON decoded response for '{var_name}'.")
                                 except json.JSONDecodeError as e:
                                     print(f"Error decoding JSON for '{var_name}': {e}. Storing as raw string.")
