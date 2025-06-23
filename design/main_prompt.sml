@@ -10,7 +10,7 @@
     @log "My number is not greater than 5."
 @endif
 
-@set phpunit_tests = @prompt file="prompts/phpunit_sorting_test.txt" max_token=2000 temperature=0.1 json_decode=true
+@set phpunit_tests = @prompt file="prompts/phpunit_sorting_test.txt" max_token=2000 temperature=0.1
 @log "Generated PHPUnit Tests:"
 @log {phpunit_tests}
 
