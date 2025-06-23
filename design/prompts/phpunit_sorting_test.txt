@@ -1,1 +1,7 @@
-
+Generate PHPUnit test cases for a sorting algorithm with the following conditions:
+- Empty array: []
+- Single element array: [5]
+- Already sorted array: {my_sorted_list}
+- Reverse-sorted array: {reverse_sorted_list}
+- Array with duplicates: [1, 2, 2, 3, 1]
+- The algorithm should handle numbers.
