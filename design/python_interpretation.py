@@ -85,7 +85,7 @@ class StructuralMLInterpreter:
             # Assuming a standard OpenAI-like response structure
             if 'choices' in response_data and len(response_data['choices']) > 0:
                 llm_response = response_data['choices'][0]['message']['content']
-                print(f"--- LLM Response Received (first 100 chars): '{llm_response[:100]}...' ---")
+                print(f"--- LLM Response Received: '{llm_response}...' ---")
                 return llm_response
             else:
                 print(f"Warning: No valid choices in LLM response: {response_data}")
