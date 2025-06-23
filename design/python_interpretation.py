@@ -313,11 +313,3 @@ if __name__ == "__main__":
     final_output = interpreter.execute('main_prompt.sml')
     print("\n\n--- Final Interpreter Output ---")
     print(final_output)
-
-    # Clean up dummy files
-    os.remove('config.toml')
-    os.remove('prompts/phpunit_sorting_test.txt')
-    os.remove('prompts/translate_word.sml')
-    os.remove('included_header.sml')
-    os.remove('main_prompt.sml')
-    os.rmdir('prompts')
