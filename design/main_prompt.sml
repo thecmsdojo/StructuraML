@@ -14,6 +14,11 @@
 @log "Generated PHPUnit Tests:"
 @log {phpunit_tests}
 
+@set carmakes_map = @prompt file="prompts/car_make_json.sml" max_token=1000
+json_decode=true
+
+@log {carmakes_map}
+
 @set vocabulary_list = ["casa", "perro", "sol"]
 @foreach item in vocabulary_list
     @log "Processing word: {item}"
