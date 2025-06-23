@@ -1,0 +1,34 @@
+@include <path_to_a_prompt_file>
+@function
+@if <condition> then
+@else
+@elseif
+@endif
+@while
+@endwhile
+@for i in range(5)
+@foreach
+@endforeach
+@log
+@call (call a function)
+@set (set a variable)
+@prompt
+{variable_name}
+@return (return the result inside of a function)
+
+example:
+@set vocabulary_list = ["casa", "perro", "sol"]
+@foreach item in vocabulary_list
+    // Using {item} for clear variable interpolation
+    @log "New word: {item}"
+    @set result = @prompt "Translate '{item}' to English."
+    @log {result}
+    @input user_translation
+    @log "You translated: {user_translation}"
+@endforeach
+
+@set phpunit_tests = @prompt "Given the sorted list of numbers: {my_sorted_list}, please generate PHPUnit test cases to verify the correctness of a sorting algorithm. Include tests for empty arrays, single-element arrays, already sorted arrays, reverse-sorted arrays, and arrays with duplicate values." max_token=500 temperature=0.7
+@log "Generated PHPUnit Tests:"
+@log {phpunit_tests}
+
+@set phpunit_tests = @prompt file="prompts/phpunit_sorting_test.txt" max_token=500 temperature=0.7
