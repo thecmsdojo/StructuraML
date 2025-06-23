@@ -1,24 +1,104 @@
 import re
 import os
 import uuid # For unique temp file names
+import toml
+import requests # For making HTTP requests to the LLM API
 
 class StructuralMLInterpreter:
-    def __init__(self, llm_api_placeholder=None):
+    def __init__(self, config_file="config.toml"):
         self.variables = {}
-        self.llm_api = llm_api_placeholder if llm_api_placeholder else self._default_llm_api
         self.output_buffer = []
+        self.llm_config = self._load_config(config_file)
+        # Choose the LLM API based on loaded config
+        # For this example, we'll assume chatgpt section exists if llm_config is not empty
+        if self.llm_config and 'chatgpt' in self.llm_config:
+            self.llm_api_key = self.llm_config['chatgpt'].get('api_key')
+            self.llm_api_url = self.llm_config['chatgpt'].get('api_url')
+            if not self.llm_api_key or not self.llm_api_url:
+                print("Warning: ChatGPT API key or URL not found in config. Using default mock LLM.")
+                self.llm_api = self._default_llm_api
+            else:
+                self.llm_api = self._actual_llm_api_call
+        else:
+            print("Warning: 'chatgpt' section not found in config. Using default mock LLM.")
+            self.llm_api = self._default_llm_api
+
+    def _load_config(self, config_file):
+        """Loads configuration from a TOML file."""
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r') as f:
+                    config = toml.load(f)
+                return config
+            except Exception as e:
+                print(f"Error loading config file '{config_file}': {e}")
+                return {}
+        else:
+            print(f"Warning: Config file '{config_file}' not found. LLM API will be mocked.")
+            return {}
 
     def _default_llm_api(self, prompt_text, max_tokens=None, temperature=None):
         """
-        Placeholder for LLM API call.
-        In a real application, replace this with actual API calls (e.g., OpenAI, Gemini).
+        Placeholder for LLM API call (mock version).
         """
-        print(f"\n--- LLM API Call ---")
+        print(f"\n--- MOCK LLM API Call ---")
         print(f"Prompt: '{prompt_text}'")
         print(f"Max Tokens: {max_tokens}, Temperature: {temperature}")
-        print(f"--------------------\n")
-        # Simulate an LLM response
-        return f"LLM responded to: '{prompt_text[:50]}...'"
+        print(f"-------------------------\n")
+        # Simulate a quick response
+        return f"Mock LLM responded to: '{prompt_text[:50]}...'"
+
+    def _actual_llm_api_call(self, prompt_text, max_tokens=None, temperature=None):
+        """
+        Performs an actual API call to an OpenAI-compatible LLM endpoint.
+        """
+        if not self.llm_api_key or not self.llm_api_url:
+            print("Error: LLM API key or URL not configured. Falling back to mock LLM.")
+            return self._default_llm_api(prompt_text, max_tokens, temperature)
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.llm_api_key}"
+        }
+
+        # OpenAI-compatible API expects messages in a list of dicts
+        payload = {
+            "model": "gpt-4o", # You might want to make this configurable in TOML
+            "messages": [{"role": "user", "content": prompt_text}]
+        }
+
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if temperature is not None:
+            payload["temperature"] = temperature
+        else:
+            payload["temperature"] = 0.7 # Default temperature if not specified
+
+        try:
+            print(f"\n--- Making ACTUAL LLM API Call to {self.llm_api_url} ---")
+            print(f"Prompt (first 100 chars): '{prompt_text[:100]}...'")
+            response = requests.post(self.llm_api_url, headers=headers, json=payload)
+            response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+
+            response_data = response.json()
+            # Assuming a standard OpenAI-like response structure
+            if 'choices' in response_data and len(response_data['choices']) > 0:
+                llm_response = response_data['choices'][0]['message']['content']
+                print(f"--- LLM Response Received (first 100 chars): '{llm_response[:100]}...' ---")
+                return llm_response
+            else:
+                print(f"Warning: No valid choices in LLM response: {response_data}")
+                return f"Error: No valid LLM response. Raw: {response_data}"
+
+        except requests.exceptions.RequestException as e:
+            print(f"Error during LLM API call: {e}")
+            return f"Error connecting to LLM: {e}"
+        except KeyError as e:
+            print(f"Error parsing LLM response (missing key: {e}): {response_data}")
+            return f"Error parsing LLM response. Missing key: {e}"
+        except Exception as e:
+            print(f"An unexpected error occurred during LLM call: {e}")
+            return f"Unexpected LLM error: {e}"
 
     def _interpolate_variables(self, text):
         """Replaces {variable_name} with their current values."""
@@ -29,13 +109,8 @@ class StructuralMLInterpreter:
 
     def _evaluate_condition(self, condition):
         """Basic condition evaluation (e.g., for @if)."""
-        # This is very basic. For complex conditions, you'd use eval() cautiously
-        # or a dedicated expression parser.
         try:
-            # Replace variable names with their values before evaluation
-            # Example: 'my_var == 10' -> '5 == 10'
             for var, value in self.variables.items():
-                # Ensure we don't accidentally replace parts of other variable names
                 condition = re.sub(r'\b' + re.escape(var) + r'\b', str(value), condition)
             return eval(condition)
         except Exception as e:
@@ -69,9 +144,6 @@ class StructuralMLInterpreter:
                     if value_expression.startswith('"') and value_expression.endswith('"'):
                         self.variables[var_name] = value_expression[1:-1]
                     elif value_expression.startswith('@prompt'):
-                        # This regex tries to capture the main prompt content OR file,
-                        # and then any number of keyword arguments like max_token, temperature.
-                        # It uses a non-greedy match for the prompt content to not consume keywords.
                         prompt_match = re.search(r'@prompt\s*(?:file="([^"]+)")?\s*(?:"((?:[^"\\]|\\.)*)")?\s*(.*)', value_expression)
                         if prompt_match:
                             prompt_file = prompt_match.group(1)
@@ -81,7 +153,6 @@ class StructuralMLInterpreter:
                             max_tokens = None
                             temperature = None
 
-                            # Parse additional parameters from other_params_string
                             max_token_match = re.search(r'max_token=(\d+)', other_params_string)
                             if max_token_match:
                                 max_tokens = int(max_token_match.group(1))
@@ -99,7 +170,7 @@ class StructuralMLInterpreter:
                                 except FileNotFoundError:
                                     print(f"Error: Prompt file '{prompt_file_path}' not found.")
                                     final_prompt = f"Error: Prompt file '{prompt_file_path}' not found."
-                            elif inline_prompt_content is not None: # Use 'is not None' because an empty string is valid
+                            elif inline_prompt_content is not None:
                                 final_prompt = self._interpolate_variables(inline_prompt_content)
                             else:
                                 print("Warning: @prompt without content or file.")
@@ -110,18 +181,15 @@ class StructuralMLInterpreter:
                         else:
                             print(f"Error: Malformed @prompt statement: {interpolated_line}")
                     elif value_expression.startswith('[') and value_expression.endswith(']'):
-                        # Basic list parsing
                         try:
                             self.variables[var_name] = [item.strip().strip('"') for item in value_expression[1:-1].split(',')]
                         except Exception as e:
                             print(f"Error parsing list for {var_name}: {e}")
                             self.variables[var_name] = []
                     else:
-                        # Attempt to evaluate as a number or boolean
                         try:
                             self.variables[var_name] = eval(value_expression)
                         except (NameError, SyntaxError):
-                            # Treat as a string if it's not a number/boolean
                             self.variables[var_name] = value_expression
                 else:
                     print(f"Error: Malformed @set statement: {interpolated_line}")
@@ -130,7 +198,6 @@ class StructuralMLInterpreter:
                 match = re.match(r'@log\s*(.*)', interpolated_line)
                 if match:
                     log_content = match.group(1)
-                    # If it's just a variable name, log its value
                     var_match = re.match(r'\{(\w+)\}', log_content)
                     if var_match:
                         self.output_buffer.append(str(self.variables.get(var_match.group(1), f"{{UNDEFINED_VAR:{var_match.group(1)}}}")))
@@ -144,7 +211,7 @@ class StructuralMLInterpreter:
                 if match:
                     include_path = os.path.join(os.path.dirname(file_path), match.group(1))
                     if os.path.exists(include_path):
-                        self._parse_and_execute_block(include_path, current_indent + 1) # Recursive include
+                        self._parse_and_execute_block(include_path, current_indent + 1)
                     else:
                         print(f"Error: Included file '{include_path}' not found.")
                 else:
@@ -157,34 +224,30 @@ class StructuralMLInterpreter:
                     temp_file = self._write_temp_block(block_lines)
                     self._parse_and_execute_block(temp_file, current_indent + 1)
                     os.remove(temp_file)
-                    i = next_i -1 # Adjust i to continue after the block
+                    i = next_i -1
                 else:
-                    # Skip to @else, @elseif, or @endif
                     block_start_index = i + 1
                     while block_start_index < len(lines):
                         block_line = lines[block_start_index].strip()
                         if block_line.startswith('@else') or block_line.startswith('@elseif') or block_line.startswith('@endif'):
-                            i = block_start_index -1 # Adjust i to process the next control flow
+                            i = block_start_index -1
                             break
                         block_start_index += 1
-                    else: # If no matching end found, advance to the end of file
+                    else:
                         i = len(lines)
 
             elif interpolated_line.startswith('@elseif'):
-                # Already handled by @if's else branch. Skip this.
                 i += 1
                 continue
 
             elif interpolated_line.startswith('@else'):
-                # If we reached @else, the @if condition was false. Execute this block.
                 block_lines, next_i = self._get_block_lines(lines, i + 1, '@endif')
                 temp_file = self._write_temp_block(block_lines)
                 self._parse_and_execute_block(temp_file, current_indent + 1)
                 os.remove(temp_file)
-                i = next_i -1 # Adjust i to continue after the block
+                i = next_i -1
 
             elif interpolated_line.startswith('@endif'):
-                # End of if block, just move to the next line
                 i += 1
                 continue
 
@@ -199,30 +262,26 @@ class StructuralMLInterpreter:
                         block_lines, next_i = self._get_block_lines(lines, i + 1, '@endforeach')
                         temp_file = self._write_temp_block(block_lines)
                         for item in collection:
-                            self.variables[loop_var] = item # Set loop variable for current iteration
+                            self.variables[loop_var] = item
                             self._parse_and_execute_block(temp_file, current_indent + 1)
                         os.remove(temp_file)
-                        i = next_i -1 # Adjust i to continue after the block
+                        i = next_i -1
                     else:
                         print(f"Error: Variable '{collection_var}' is not a list for @foreach.")
-                        # Skip the block if not a list
                         _, next_i = self._get_block_lines(lines, i + 1, '@endforeach')
                         i = next_i - 1
                 else:
                     print(f"Error: Malformed @foreach statement: {interpolated_line}")
 
             elif interpolated_line.startswith('@endforeach'):
-                # End of foreach block, just move to the next line
                 i += 1
                 continue
 
-            # Handle direct variable output or plain text lines
             elif interpolated_line.startswith('{') and interpolated_line.endswith('}'):
                 var_name = interpolated_line[1:-1]
                 self.output_buffer.append(str(self.variables.get(var_name, f"{{UNDEFINED_VAR:{var_name}}}")))
             else:
-                # Treat as plain text to be included in the final prompt, after interpolation
-                if not interpolated_line.startswith('@'): # Avoid printing unhandled directives
+                if not interpolated_line.startswith('@'):
                     self.output_buffer.append(interpolated_line)
 
             i += 1
@@ -235,9 +294,9 @@ class StructuralMLInterpreter:
             line = all_lines[current_index].strip()
             if any(line.startswith(directive) for directive in end_directives):
                 return block_lines, current_index + 1
-            block_lines.append(all_lines[current_index]) # Keep original line for writing to temp file
+            block_lines.append(all_lines[current_index])
             current_index += 1
-        return block_lines, current_index # Reached end of file without finding end directive
+        return block_lines, current_index
 
     def _write_temp_block(self, lines):
         """Writes a block of lines to a temporary file for recursive execution."""
@@ -249,6 +308,12 @@ class StructuralMLInterpreter:
 
 # --- Example Usage ---
 if __name__ == "__main__":
+    # Create config.toml for LLM credentials
+    with open('config.toml', 'w') as f:
+        f.write('[chatgpt]\n')
+        f.write('api_key = "YOUR_OPENAI_API_KEY"\n') # REPLACE WITH YOUR ACTUAL API KEY
+        f.write('api_url = "https://api.openai.com/v1/chat/completions"\n') # Or your custom endpoint
+
     # Create some dummy prompt files for demonstration
     os.makedirs('prompts', exist_ok=True)
 
@@ -296,7 +361,7 @@ Please translate the word '{word_to_translate}' to English.
 @set vocabulary_list = ["casa", "perro", "sol"]
 @foreach item in vocabulary_list
     @log "Processing word: {item}"
-    @set word_to_translate = "{item}" // Assign to a variable for the included prompt, ensure it's a string literal
+    @set word_to_translate = "{item}"
     @set result = @prompt file="prompts/translate_word.sml"
     @log "Translation for '{item}': {result}"
 @endforeach
@@ -309,12 +374,14 @@ Final prompt output:
 {another_prompt_example}
 """)
 
-    interpreter = StructuralMLInterpreter()
+    # Initialize interpreter with the config file
+    interpreter = StructuralMLInterpreter(config_file="config.toml")
     final_output = interpreter.execute('main_prompt.sml')
     print("\n\n--- Final Interpreter Output ---")
     print(final_output)
 
     # Clean up dummy files
+    os.remove('config.toml')
     os.remove('prompts/phpunit_sorting_test.txt')
     os.remove('prompts/translate_word.sml')
     os.remove('included_header.sml')
