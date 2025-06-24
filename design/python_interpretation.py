@@ -1,9 +1,8 @@
 import re
 import os
-import uuid # For unique temp file names
 import toml
-import requests # For making HTTP requests to the LLM API
-import json # Import the json library
+import requests
+import json
 
 class StructuralMLInterpreter:
     def __init__(self, config_file="config.toml"):
@@ -11,7 +10,6 @@ class StructuralMLInterpreter:
         self.output_buffer = []
         self.llm_config = self._load_config(config_file)
         # Choose the LLM API based on loaded config
-        # For this example, we'll assume chatgpt section exists if llm_config is not empty
         if self.llm_config and 'chatgpt' in self.llm_config:
             self.llm_api_key = self.llm_config['chatgpt'].get('api_key')
             self.llm_api_url = self.llm_config['chatgpt'].get('api_url')
@@ -102,39 +100,63 @@ class StructuralMLInterpreter:
             return f"Unexpected LLM error: {e}"
 
     def _interpolate_variables(self, text):
-        """Replaces {variable_name} with their current values."""
+        """Replaces {variable_name} with their current values, supporting nested access."""
         def replace_match(match):
-            var_name = match.group(1)
-            return str(self.variables.get(var_name, f"{{UNDEFINED_VAR:{var_name}}}"))
-        return re.sub(r'\{(\w+)\}', replace_match, text)
+            var_expression = match.group(1) # This can be "my_var", "my_list[0]", "my_dict['key']"
+            try:
+                # Safely evaluate the full variable expression using the current variables context
+                # This allows for {my_list[0]} or {my_dict['key']}
+                return str(eval(var_expression, {"__builtins__": None}, self.variables))
+            except Exception as e:
+                # print(f"DEBUG: Error during interpolation eval for '{var_expression}': {e}") # Uncomment for debugging
+                return f"{{UNDEFINED_OR_INVALID_VAR:{var_expression}}}"
+        # The regex now captures anything that is not a curly brace, allowing for more complex expressions
+        return re.sub(r'\{([^{}]+)\}', replace_match, text)
 
     def _evaluate_condition(self, condition):
         """Basic condition evaluation (e.g., for @if)."""
         try:
-            for var, value in self.variables.items():
-                condition = re.sub(r'\b' + re.escape(var) + r'\b', str(value), condition)
-            return eval(condition)
+            # Create a safe environment for eval, limiting globals and builtins
+            # Only self.variables are accessible
+            return eval(condition, {"__builtins__": None}, self.variables)
         except Exception as e:
             print(f"Error evaluating condition '{condition}': {e}")
             return False
 
     def execute(self, file_path):
         self.output_buffer = [] # Clear buffer for new execution
-        self._parse_and_execute_block(file_path)
-        return "\n".join(self.output_buffer)
+        try:
+            with open(file_path, 'r') as f:
+                lines = f.readlines()
+            # Pass the directory of the SML file for resolving relative paths in @include and @prompt file
+            self._parse_and_execute_block(lines, os.path.dirname(os.path.abspath(file_path)))
+            return "\n".join(self.output_buffer)
+        except FileNotFoundError:
+            return f"Error: File '{file_path}' not found."
+        except Exception as e:
+            return f"Error during execution: {e}"
 
-    def _parse_and_execute_block(self, file_path, current_indent=0):
-        with open(file_path, 'r') as f:
-            lines = f.readlines()
-
+    def _parse_and_execute_block(self, lines, base_dir, current_indent=0):
+        """
+        Parses and executes a block of lines.
+        Args:
+            lines (list): A list of strings, where each string is a line of the SML code.
+            base_dir (str): The base directory for resolving relative file paths (e.g., for @include, @prompt file).
+            current_indent (int): Current indentation level for debugging/logging (optional).
+        """
         i = 0
         while i < len(lines):
-            line = lines[i].strip()
-            interpolated_line = self._interpolate_variables(line)
+            line = lines[i]
+            stripped_line = line.strip()
 
-            if not interpolated_line:
+            if not stripped_line:
                 i += 1
                 continue
+
+            # Interpolate the entire line for directives, as variables might be part of the command itself
+            # e.g., @log {my_variable}, @include "{file_path_var}"
+            interpolated_line = self._interpolate_variables(stripped_line)
+
 
             if interpolated_line.startswith('@set'):
                 match = re.match(r'@set (\w+)\s*=\s*(.*)', interpolated_line)
@@ -143,19 +165,20 @@ class StructuralMLInterpreter:
                     value_expression = match.group(2).strip()
 
                     if value_expression.startswith('"') and value_expression.endswith('"'):
+                        # Explicit string literal
                         self.variables[var_name] = value_expression[1:-1]
                     elif value_expression.startswith('@prompt'):
-                        # Updated regex to capture json_decode parameter
+                        # Handle @prompt specific logic
                         prompt_match = re.search(r'@prompt\s*(?:file="([^"]+)")?\s*(?:"((?:[^"\\]|\\.)*)")?\s*(.*?)(?:\s*json_decode=(true|false))?\s*$', value_expression)
                         if prompt_match:
                             prompt_file = prompt_match.group(1)
                             inline_prompt_content = prompt_match.group(2)
                             other_params_string = prompt_match.group(3).strip()
-                            json_decode_param = prompt_match.group(4) # Capture the json_decode parameter
+                            json_decode_param = prompt_match.group(4)
 
                             max_tokens = None
                             temperature = None
-                            do_json_decode = False # Default to false
+                            do_json_decode = False
 
                             if json_decode_param and json_decode_param.lower() == 'true':
                                 do_json_decode = True
@@ -170,9 +193,10 @@ class StructuralMLInterpreter:
 
                             final_prompt = ""
                             if prompt_file:
-                                prompt_file_path = os.path.join(os.path.dirname(file_path), prompt_file)
+                                prompt_file_path = os.path.join(base_dir, prompt_file)
                                 try:
                                     with open(prompt_file_path, 'r') as pf:
+                                        # Interpolate variables in prompt file content as well
                                         final_prompt = self._interpolate_variables(pf.read())
                                 except FileNotFoundError:
                                     print(f"Error: Prompt file '{prompt_file_path}' not found.")
@@ -186,28 +210,28 @@ class StructuralMLInterpreter:
                             llm_response = self.llm_api(final_prompt, max_tokens, temperature)
 
                             if do_json_decode:
-                                # This regex handles both ```json and ```
-                                cleaned_llm_response = re.sub(r"```(?:json)?\s*(.*?)\s*```", r"\1", llm_response, flags=re.DOTALL)
+                                cleaned_llm_response = re.sub(r"```(?:json)?\s*(.*?)\s*```", r"\1", llm_response, flags=re.DOTALL).strip()
                                 try:
                                     self.variables[var_name] = json.loads(cleaned_llm_response)
-                                    print(f"JSON decoded response for '{var_name}'.")
+                                    # print(f"DEBUG: JSON decoded response for '{var_name}'. Value: {self.variables[var_name]}, Type: {type(self.variables[var_name])}") # Debug print
                                 except json.JSONDecodeError as e:
                                     print(f"Error decoding JSON for '{var_name}': {e}. Storing as raw string.")
-                                    self.variables[var_name] = llm_response # Store raw if decode fails
+                                    self.variables[var_name] = llm_response
                             else:
                                 self.variables[var_name] = llm_response
                         else:
                             print(f"Error: Malformed @prompt statement: {interpolated_line}")
-                    elif value_expression.startswith('[') and value_expression.endswith(']'):
-                        try:
-                            self.variables[var_name] = [item.strip().strip('"') for item in value_expression[1:-1].split(',')]
-                        except Exception as e:
-                            print(f"Error parsing list for {var_name}: {e}")
-                            self.variables[var_name] = []
                     else:
+                        # Attempt to evaluate as a general Python literal (list, dict, int, float, bool)
+                        # or a simple expression involving existing variables.
                         try:
-                            self.variables[var_name] = eval(value_expression)
-                        except (NameError, SyntaxError):
+                            # Use the original (non-interpolated by top-level line interpolation)
+                            # value_expression here for eval, as it expects Python literal syntax.
+                            self.variables[var_name] = eval(value_expression, {"__builtins__": None}, self.variables)
+                            # print(f"DEBUG: @set {var_name} = evaluated to {self.variables[var_name]}, Type: {type(self.variables[var_name])}") # Debug print
+                        except (NameError, SyntaxError, TypeError, IndexError) as e:
+                            # If evaluation fails, treat as a literal string
+                            print(f"Warning: Could not evaluate '{value_expression}' for variable '{var_name}'. Storing as string. Error: {e}")
                             self.variables[var_name] = value_expression
                 else:
                     print(f"Error: Malformed @set statement: {interpolated_line}")
@@ -216,21 +240,25 @@ class StructuralMLInterpreter:
                 match = re.match(r'@log\s*(.*)', interpolated_line)
                 if match:
                     log_content = match.group(1)
-                    var_match = re.match(r'\{(\w+)\}', log_content)
-                    if var_match:
-                        self.output_buffer.append(str(self.variables.get(var_match.group(1), f"{{UNDEFINED_VAR:{var_match.group(1)}}}")))
-                    else:
-                        self.output_buffer.append(log_content)
+                    # log_content is already interpolated because it came from interpolated_line
+                    self.output_buffer.append(log_content)
                 else:
                     print(f"Error: Malformed @log statement: {interpolated_line}")
 
             elif interpolated_line.startswith('@include'):
-                # Modified regex to look for double quotes
                 match = re.match(r'@include\s*"([^"]+)"', interpolated_line)
                 if match:
-                    include_path = os.path.join(os.path.dirname(file_path), match.group(1))
+                    include_path = os.path.join(base_dir, match.group(1))
                     if os.path.exists(include_path):
-                        self._parse_and_execute_block(include_path, current_indent + 1)
+                        try:
+                            with open(include_path, 'r') as f_inc:
+                                include_lines = f_inc.readlines()
+                            # Recursive call, passing the new base_dir for the included file
+                            self._parse_and_execute_block(include_lines, os.path.dirname(os.path.abspath(include_path)), current_indent + 1)
+                        except FileNotFoundError:
+                            print(f"Error: Included file '{include_path}' not found.")
+                        except Exception as e:
+                            print(f"Error processing included file '{include_path}': {e}")
                     else:
                         print(f"Error: Included file '{include_path}' not found.")
                 else:
@@ -240,53 +268,74 @@ class StructuralMLInterpreter:
                 condition = interpolated_line[len('@if'):].strip()
                 if self._evaluate_condition(condition):
                     block_lines, next_i = self._get_block_lines(lines, i + 1, '@else', '@elseif', '@endif')
-                    temp_file = self._write_temp_block(block_lines)
-                    self._parse_and_execute_block(temp_file, current_indent + 1)
-                    os.remove(temp_file)
-                    i = next_i -1
+                    self._parse_and_execute_block(block_lines, base_dir, current_indent + 1) # Execute directly
+                    i = next_i - 1 # Adjust index to skip the executed block
                 else:
+                    # Skip the block until @else, @elseif, or @endif
                     block_start_index = i + 1
                     while block_start_index < len(lines):
                         block_line = lines[block_start_index].strip()
                         if block_line.startswith('@else') or block_line.startswith('@elseif') or block_line.startswith('@endif'):
-                            i = block_start_index -1
+                            i = block_start_index - 1 # Set i to the line *before* the directive found
                             break
                         block_start_index += 1
                     else:
-                        i = len(lines)
+                        i = len(lines) # Reached end of file without a closing directive
 
             elif interpolated_line.startswith('@elseif'):
-                i += 1
-                continue
+                # If we arrived here, the previous @if or @elseif was false.
+                condition = interpolated_line[len('@elseif'):].strip()
+                if self._evaluate_condition(condition):
+                    block_lines, next_i = self._get_block_lines(lines, i + 1, '@else', '@endif')
+                    self._parse_and_execute_block(block_lines, base_dir, current_indent + 1) # Execute directly
+                    i = next_i - 1 # Adjust index to skip the executed block
+                else:
+                    # Skip the block until @else or @endif
+                    block_start_index = i + 1
+                    while block_start_index < len(lines):
+                        block_line = lines[block_start_index].strip()
+                        if block_line.startswith('@else') or block_line.startswith('@endif'):
+                            i = block_start_index - 1 # Set i to the line *before* the directive found
+                            break
+                        block_start_index += 1
+                    else:
+                        i = len(lines) # Reached end of file without a closing directive
 
             elif interpolated_line.startswith('@else'):
+                # This block is executed only if previous @if/@elseif was false
                 block_lines, next_i = self._get_block_lines(lines, i + 1, '@endif')
-                temp_file = self._write_temp_block(block_lines)
-                self._parse_and_execute_block(temp_file, current_indent + 1)
-                os.remove(temp_file)
-                i = next_i -1
+                self._parse_and_execute_block(block_lines, base_dir, current_indent + 1) # Execute directly
+                i = next_i - 1 # Adjust index to skip the executed block
 
             elif interpolated_line.startswith('@endif'):
                 i += 1
                 continue
 
             elif interpolated_line.startswith('@foreach'):
-                match = re.match(r'@foreach (\w+) in (\w+)', interpolated_line)
+                match = re.match(r'@foreach (\w+) in (.*)', interpolated_line)
                 if match:
                     loop_var = match.group(1)
-                    collection_var = match.group(2)
-                    collection = self.variables.get(collection_var)
+                    collection_expression = match.group(2).strip()
 
-                    if isinstance(collection, list):
-                        block_lines, next_i = self._get_block_lines(lines, i + 1, '@endforeach')
-                        temp_file = self._write_temp_block(block_lines)
-                        for item in collection:
-                            self.variables[loop_var] = item
-                            self._parse_and_execute_block(temp_file, current_indent + 1)
-                        os.remove(temp_file)
-                        i = next_i -1
-                    else:
-                        print(f"Error: Variable '{collection_var}' is not a list for @foreach.")
+                    try:
+                        # Evaluate the collection expression in the current variables context
+                        collection = eval(collection_expression, {"__builtins__": None}, self.variables)
+
+                        if isinstance(collection, (list, dict, str)): # Allow iteration over lists, dicts (keys), and strings
+                            block_lines, next_i = self._get_block_lines(lines, i + 1, '@endforeach')
+                            for item in collection:
+                                # Set the loop variable in the interpreter's variables for the block's execution
+                                self.variables[loop_var] = item
+                                self._parse_and_execute_block(block_lines, base_dir, current_indent + 1) # Execute directly
+                            i = next_i - 1 # Adjust index to skip the entire foreach block
+                        else:
+                            print(f"Error: Expression '{collection_expression}' does not resolve to an iterable (list, dict, or string) for @foreach. Type: {type(collection)}")
+                            # Skip the block if the collection is not iterable
+                            _, next_i = self._get_block_lines(lines, i + 1, '@endforeach')
+                            i = next_i - 1
+                    except Exception as e:
+                        print(f"Error evaluating collection expression '{collection_expression}': {e}")
+                        # Skip the block if there's an error evaluating the collection
                         _, next_i = self._get_block_lines(lines, i + 1, '@endforeach')
                         i = next_i - 1
                 else:
@@ -296,11 +345,9 @@ class StructuralMLInterpreter:
                 i += 1
                 continue
 
-            elif interpolated_line.startswith('{') and interpolated_line.endswith('}'):
-                var_name = interpolated_line[1:-1]
-                self.output_buffer.append(str(self.variables.get(var_name, f"{{UNDEFINED_VAR:{var_name}}}")))
             else:
-                if not interpolated_line.startswith('@'):
+                # If it's not a directive, and not just whitespace, append its interpolated content.
+                if not stripped_line.startswith('@'): # Ensure we don't accidentally print directives that didn't match.
                     self.output_buffer.append(interpolated_line)
 
             i += 1
@@ -310,51 +357,18 @@ class StructuralMLInterpreter:
         block_lines = []
         current_index = start_index
         while current_index < len(all_lines):
-            line = all_lines[current_index].strip()
+            line = all_lines[current_index].strip() # Strip for directive matching
             if any(line.startswith(directive) for directive in end_directives):
                 return block_lines, current_index + 1
-            block_lines.append(all_lines[current_index])
+            block_lines.append(all_lines[current_index]) # Keep original line with newline for block execution
             current_index += 1
         return block_lines, current_index
-
-    def _write_temp_block(self, lines):
-        """Writes a block of lines to a temporary file for recursive execution."""
-        temp_file_name = f"temp_structuralml_block_{uuid.uuid4().hex}.sml"
-        with open(temp_file_name, 'w') as f:
-            f.writelines(lines)
-        return temp_file_name
 
 
 # --- Main Execution Logic ---
 if __name__ == "__main__":
-    # Before running this script:
-    # 1. Create a 'config.toml' file in the same directory, e.g.:
-    #    [chatgpt]
-    #    api_key = "YOUR_OPENAI_API_KEY"
-    #    api_url = "https://api.openai.com/v1/chat/completions"
-    #
-    # 2. Create a 'main_prompt.sml' file in the same directory, e.g.:
-    #    @set my_name = "Alice"
-    #    @log Hello, {my_name}!
-
-    #    @set current_year = 2025
-    #    @if current_year > 2024
-    #    @log It's a new year!
-    #    @endif
-
-    #    @set colors = ["red", "green", "blue"]
-    #    @foreach color in colors
-    #    @log My favorite color is {color}.
-    #    @endforeach
-
-    #    # Example for @prompt with json_decode
-    #    # Create a 'prompts' directory and a file inside it: 'prompts/my_json_prompt.txt'
-    #    # with content like: {"item": "apple", "quantity": 10, "price": 1.25}
-    #    @set product_info = @prompt file="prompts/my_json_prompt.txt" json_decode=true
-    #    @log Product: {product_info["item"]}, Quantity: {product_info["quantity"]}
-
-    # Initialize interpreter with the config file
     interpreter = StructuralMLInterpreter(config_file="config.toml")
-    final_output = interpreter.execute('main_prompt.sml')
+    main_sml_file = "main_prompt.sml"
+    final_output = interpreter.execute(main_sml_file)
     print("\n\n--- Final Interpreter Output ---")
     print(final_output)
