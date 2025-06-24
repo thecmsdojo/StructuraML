@@ -12,18 +12,4 @@
 
 @set carmakes_map = @prompt file="prompts/car_make_json.sml" max_token=1000
 
-@log {carmakes_map}
-
-@set vocabulary_list = ["casa", "perro", "sol"]
-@foreach item in vocabulary_list
-    @log "Processing word: {item}"
-    @set word_to_translate = "{item}"
-    @set result = @prompt file="prompts/translate_word.sml"
-    @log "Translation for '{item}': {result}"
-@endforeach
-
-@set another_prompt_example = @prompt "What is the capital of France?" max_token=50
-@log "Another LLM query result: {another_prompt_example}"
-
-Final prompt output:
-{another_prompt_example}
+show all the makes in {carmakes_map}
