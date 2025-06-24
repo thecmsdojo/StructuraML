@@ -368,7 +368,7 @@ class StructuralMLInterpreter:
 # --- Main Execution Logic ---
 if __name__ == "__main__":
     interpreter = StructuralMLInterpreter(config_file="config.toml")
-    main_sml_file = "main_prompt.sml"
-    final_output = interpreter.execute(main_sml_file)
-    print("\n\n--- Final Interpreter Output ---")
-    print(final_output)
+    main_prompt_file = "main_prompt.sml"
+    main_prompt_content = interpreter.execute(main_prompt_file)
+    # now send the prompt to llm
+    interpreter._actual_llm_api_call(main_prompt_content, 1000, 0.1)
