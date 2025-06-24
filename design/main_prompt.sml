@@ -27,7 +27,3 @@
 
 Final prompt output:
 {another_prompt_example}
-
-@foreach car_entry in carmakes_map
-    @log "Make: {car_entry["make"]}"
-@endforeach
